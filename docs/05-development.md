@@ -41,7 +41,12 @@ npm run start          # build:ts rồi chạy node dist/index.mjs
 | `data/backup-pre-spaces/` | backup trước migration spaces |
 | `data/*.bak-pre-spaces*` | snapshots cũ |
 
-## Gotchas
+## CI/CD (GitHub Actions)
+
+- **`.github/workflows/ci.yml`** — chạy trên push `main` / PR: `typecheck` + `npm test`, Playwright e2e (chromium), build native Tantivy + test, production bundle (`build:ts`).
+- **`.github/workflows/cd.yml`** — push `main` hoặc tag `v*` → build Docker image đẩy lên **GHCR** `ghcr.io/<owner>/notetaker` (tags: branch, semver, sha; cache gha).
+- **`Dockerfile`** (multi-stage): bundle server bằng esbuild; runtime = prod deps + `dist` + `public`; DB/index nằm ở `/app/data` (volume), server tự seed khi rỗng.
+- Lưu ý Rust: trên runner, `dtolnay/rust-toolchain@stable` override root `rust-toolchain.toml` (1.85) — `search-native/` dùng stable.
 
 1. **rustup toolchain theo cwd** — chạy `cargo` từ đúng thư mục (xem [`04-search.md`](./04-search.md)).
 2. **Đừng thay stack** khi chưa được yêu cầu: architect §4 đóng băng Node/Express/Alpine/SQLite; lộ trình dài hạn là PostgreSQL + pgvector (§70).

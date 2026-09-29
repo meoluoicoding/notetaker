@@ -1,0 +1,14 @@
+.git
+node_modules
+rust-lib
+search-native/target
+search-native/search-native.node
+data
+dist
+test-results
+playwright-report
+.playwright-mcp
+.vscode
+*.log
+Thumbs.db
+.DS_Store
