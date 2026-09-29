@@ -1,6 +1,7 @@
 import { db } from "../db/client";
 import type { SpaceRow, StructureRow } from "../db/schema";
 import { DomainError } from "../shared/errors";
+import { getNativeSearch } from "../search/native-search";
 import { v4 as uuidv4 } from "uuid";
 
 const now = () => new Date().toISOString();
@@ -149,6 +150,9 @@ export class SpaceService {
       await trx.deleteFrom("tags").where("space_id", "=", id).execute();
       await trx.deleteFrom("spaces").where("id", "=", id).execute();
     });
+
+    // Mirror the removal into the optional native (Tantivy) index; no-op without .node.
+    getNativeSearch()?.remove(objectIds);
 
     return true;
   }

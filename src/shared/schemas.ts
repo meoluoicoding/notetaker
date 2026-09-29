@@ -39,7 +39,8 @@ export const createObjectSchema = z.object({
   description: z.string().max(2000).optional(),
   icon: z.string().max(32).optional(),
   coverUrl: z.string().url().optional(),
-  properties: z.record(z.string().uuid(), z.unknown()).optional(),
+  // Keys accept property definition id OR slug (the service resolves both).
+  properties: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string().min(1).max(100)).optional(),
   blocks: z
     .array(

@@ -512,7 +512,7 @@
                @input="typePicker.index = 0"
                @keydown.down.prevent="typeMove(1)"
                @keydown.up.prevent="typeMove(-1)"
-               @keydown.enter.prevent="typePickerEnter($event)"
+               @keydown.enter.prevent.stop="typePickerEnter($event)"
                @keydown.escape.prevent="typePicker.open = false" />
         <div class="picker-list">
           <template x-for="(s, idx) in typeOptions()" :key="s.id">

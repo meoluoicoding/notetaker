@@ -330,6 +330,14 @@ function app() {
 
       if (mod && key === "k") { evt.preventDefault(); this.openPalette(); return; }
       if (mod && key === "n") { evt.preventDefault(); this.openTypePicker(); return; }
+      // Enter while the type picker is open acts on it even when focus never
+      // reached the search input (e.g. right after an object opened): plain
+      // Enter picks the highlighted type, Shift+Enter opens the full form.
+      if (this.typePicker.open && evt.key === "Enter") {
+        evt.preventDefault();
+        this.typePickerEnter(evt);
+        return;
+      }
       if (mod && key === ",") { evt.preventDefault(); this.openSettings(this.settings.pane); return; }
       if (mod && (key === "\\" || evt.code === "Backslash")) {
         evt.preventDefault();
@@ -625,18 +633,21 @@ function app() {
           ? { ...b, content: { ...b.content, language: this.normalizeCodeLang(b.content?.language) } }
           : b
       );
-      this.currentObject = obj;
-      this.blocks = obj.blocks;
+      // Property definitions (status/due …) are per-structure; the object row
+      // only carries the result rows, so the editor needs this one extra fetch.
+      // Build the FULL object BEFORE handing it to the reactive component —
+      // mutating `obj` after `this.currentObject = obj` would never reach the
+      // Alpine proxy it captured.
       const [backlinks, linkedObjects, structDefs] = await Promise.all([
         this.api(`/objects/${id}/backlinks`),
         this.api(`/objects/${id}/linked`),
         this.api(`/structures/${obj.structure_id}`).catch(() => null),
       ]);
-      // Property definitions (status/due …) are per-structure; the object row
-      // only carries the result rows, so the editor needs this one extra fetch.
       if (structDefs && structDefs.properties) {
         obj.structure = { ...obj.structure, properties: structDefs.properties };
       }
+      this.currentObject = obj;
+      this.blocks = obj.blocks;
       this.backlinks = backlinks;
       this.linkedObjects = linkedObjects;
       this.openTab(obj);
@@ -1215,10 +1226,20 @@ function app() {
 
     async renameObject(title) {
       if (!this.currentObject || !title) return;
-      this.currentObject = await this.api(`/objects/${this.currentObject.id}`, {
+      // Enter in the title saves, then the blur fires this again: a no-op
+      // PATCH (and a second "Renamed" toast). Skip when nothing changed.
+      const trimmed = typeof title === "string" ? title.trim() : "";
+      if (!trimmed) return; // whitespace-only: keep the current title
+      if (trimmed === this.currentObject.title) {
+        const tab = this.tabs.find((t) => t.id === this.currentObject.id);
+        if (tab) tab.title = this.currentObject.title;
+        return;
+      }
+      const updated = await this.api(`/objects/${this.currentObject.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({ title: trimmed }),
       });
+      this.currentObject = updated;
       const tab = this.tabs.find((t) => t.id === this.currentObject.id);
       if (tab) tab.title = this.currentObject.title;
       this.showToast("Renamed");

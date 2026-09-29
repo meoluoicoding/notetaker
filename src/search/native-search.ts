@@ -39,9 +39,19 @@ const CANDIDATES = [
   "search-native.darwin-arm64.node",
 ];
 
-/** Index directory relative to the repo root (not part of the app schema). */
+/**
+ * Index directory relative to the repo root (not part of the app schema).
+ * Scoped by the SQLite database in use: the dev server (data/notetaker.db) and
+ * the e2e server (data/e2e.db) must never open the same Tantivy index at once —
+ * Tantivy is single-writer per index on disk.
+ */
 export function nativeIndexDir(): string {
-  return process.env.NT_TANTIVY_DIR || path.resolve("data", "tantivy");
+  if (process.env.NT_TANTIVY_DIR) return process.env.NT_TANTIVY_DIR;
+  if (process.env.DB_PATH) {
+    const base = path.basename(process.env.DB_PATH).replace(/\.(db|sqlite|sqlite3)$/i, "") || "custom";
+    return path.resolve("data", `tantivy-${base}`);
+  }
+  return path.resolve("data", "tantivy");
 }
 
 function resolveNativeModule(): NativeModule | null {

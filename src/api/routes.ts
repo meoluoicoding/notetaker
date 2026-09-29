@@ -22,6 +22,7 @@ import {
 import { DomainError } from "../shared/errors";
 import { ok } from "./error-handler";
 import { serializeBlock } from "./serializers";
+import { getNativeSearch } from "../search/native-search";
 
 export const apiRouter = Router();
 
@@ -306,6 +307,8 @@ apiRouter.get("/search", async (req, res, next) => {
     ok(res, hits, {
       query: q,
       count: hits.length,
+      // lets feature tests/smokes know whether the Tantivy layer is active
+      native: getNativeSearch() !== null,
       filters: { spaceId, structureId: structureId ?? null, tag: tag ?? null },
     });
   } catch (e) {

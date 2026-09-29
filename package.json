@@ -11,6 +11,7 @@
     "e2e": "playwright test --config=playwright.e2e.config.ts",
     "e2e:ui": "playwright test --config=playwright.e2e.config.ts --ui",
     "e2e:debug": "playwright test --config=playwright.e2e.config.ts --debug",
+    "e2e:features": "playwright test --config=playwright.features.config.ts",
     "build:vendor": "node scripts/build-tldraw-vendor.mjs",
     "build:ts": "node scripts/build-ts.mjs",
     "build:native": "cd search-native && cargo build --release && node ../scripts/postbuild-native.mjs",
