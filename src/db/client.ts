@@ -232,6 +232,7 @@ export async function migrate(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_object_id);
     CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_object_id);
     CREATE INDEX IF NOT EXISTS idx_properties_object ON object_properties(object_id);
+    CREATE INDEX IF NOT EXISTS idx_object_tags_tag ON object_tags(tag_id);
 
     -- Full-text index (FTS5): one row per object = title + description + block text + tags.
     -- External tables stay the source of truth; the project re-indexes on every write.

@@ -15,6 +15,8 @@
     "build:vendor": "node scripts/build-tldraw-vendor.mjs",
     "build:ts": "node scripts/build-ts.mjs",
     "build:native": "cd search-native && cargo build --release && node ../scripts/postbuild-native.mjs",
+    "bench": "tsx benchmark/run.ts",
+    "sql:check": "tsx sql/check.ts",
     "start": "npm run build:ts && node dist/index.mjs"
   },
   "dependencies": {

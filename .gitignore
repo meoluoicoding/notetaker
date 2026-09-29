@@ -19,6 +19,10 @@ playwright-report/
 .vscode/
 .idea/
 
+# --- benchmark scratch db + reports ---
+benchmark/benchmark.db*
+benchmark/results/
+
 # --- os noise ---
 Thumbs.db
 .DS_Store
