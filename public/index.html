@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notetaker</title>
+  <script>
+    try {
+      var mode = localStorage.getItem("nt-theme-mode") || "system";
+      var resolved = mode === "system"
+        ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : mode;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.themeMode = mode;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="/assets/block-registry.js" defer></script>
+  <script src="/assets/inline-marks.js" defer></script>
+  <script src="/assets/entry-rules.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+  <script src="/vendor/alpinejs/cdn.min.js" defer></script>
+  <script>
+    // Alpine is served locally; fall back to the CDN if the vendor copy is missing.
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.Alpine || document.querySelector("script[data-alpine-fallback]")) return;
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js";
+      s.defer = true;
+      s.dataset.alpineFallback = "1";
+      document.head.appendChild(s);
+    });
+  </script>
+</head>
+<body>
+  <div x-data="app()" x-init="init()" x-on:keydown.window="onGlobalKey($event)">
+    <div class="app">
+      <!-- ============ title bar ============ -->
+      <header class="titlebar">
+        <div class="tb-group">
+          <button class="space-btn" :class="{ open: spaceSwitcher.open }" @click="openSpaceSwitcher()" title="Switch space">
+            <span class="space-avatar" x-text="activeSpace() ? (activeSpace().icon || '•') : '🧠'"></span>
+            <span class="space-name truncate" x-text="activeSpace() ? activeSpace().name : 'Loading…'"></span>
+            <span class="tb-chevron">⌄</span>
+          </button>
+          <button class="tb-icon" @click="sidebarCollapsed = !sidebarCollapsed" title="Toggle sidebar (Ctrl+\)">▤</button>
+          <button class="tb-icon" @click="openSettings('appearance')" title="Settings (Ctrl+,)">⚙</button>
+        </div>
+
+        <div class="tb-group tb-nav">
+          <button class="tb-icon" :disabled="!canGoBack()" @click="goBack()" title="Back">‹</button>
+          <button class="tb-icon" :disabled="!canGoForward()" @click="goForward()" title="Forward">›</button>
+          <button class="tb-icon" :disabled="!canUndo()" @click="undo()" title="Undo (Ctrl+Z)">↶</button>
+          <button class="tb-icon" :disabled="!canRedo()" @click="redo()" title="Redo (Ctrl+Shift+Z)">↷</button>
+        </div>
+
+        <div class="tabstrip">
+          <template x-for="tab in tabs" :key="tab.id">
+            <div class="tab" :class="{ active: tab.id === activeTabId }" @click="activateTab(tab.id)">
+              <span class="tab-icon" x-text="tab.icon || '•'"></span>
+              <span class="tab-title truncate" x-text="tab.title"></span>
+              <button class="tab-close" @click.stop="closeTab(tab.id)" title="Close tab">✕</button>
+            </div>
+          </template>
+          <button class="tab-new" @click="openTypePicker()" title="New object (Ctrl+N)">＋</button>
+        </div>
+
+        <div class="tb-group tb-right">
+          <button class="tb-icon" @click="openPalette()" title="Search (Ctrl+K)">⌕</button>
+          <button class="tb-icon" @click="toggleTheme()"
+                  :title="theme === 'dark' ? 'Switch to light' : 'Switch to dark'"
+                  x-text="theme === 'dark' ? '☀' : '☾'"></button>
+        </div>
+      </header>
+
+      <!-- ============ workspace ============ -->
+      <div class="workspace">
+        <!-- sidebar -->
+        <aside class="sidebar" :class="{ rail: sidebarCollapsed }">
+          <nav class="sb-nav">
+            <button class="sb-item" @click="openTypePicker()" title="New object (Ctrl+N)">
+              <span class="sb-ico">＋</span><span class="sb-label" x-show="!sidebarCollapsed">New</span>
+            </button>
+            <button class="sb-item" @click="openPalette()" title="Search (Ctrl+K)">
+              <span class="sb-ico">⌕</span><span class="sb-label" x-show="!sidebarCollapsed">Search</span>
+            </button>
+            <button class="sb-item" :class="{ active: view === 'explore' }" @click="setView('explore')" title="Explore all objects">
+              <span class="sb-ico">🧭</span><span class="sb-label" x-show="!sidebarCollapsed">Explore</span>
+            </button>
+            <button class="sb-item" :class="{ active: view === 'calendar' }" @click="setView('calendar')" title="Daily notes calendar">
+              <span class="sb-ico">📅</span><span class="sb-label" x-show="!sidebarCollapsed">Calendar</span>
+            </button>
+            <button class="sb-item" :class="{ active: view === 'pinned' }" @click="setView('pinned')" title="Pinned objects">
+              <span class="sb-ico">📌</span><span class="sb-label" x-show="!sidebarCollapsed">Pinned</span>
+            </button>
+          </nav>
+
+          <div class="sb-scroll" x-show="!sidebarCollapsed">
+            <div class="sb-section">Objects</div>
+            <template x-for="s in structures" :key="s.id">
+              <button class="sb-item sb-small" @click="filterByStructure(s.id)" :class="{ active: view === s.id }"
+                      :title="s.name">
+                <span class="sb-ico" x-text="s.icon || '•'"></span>
+                <span class="sb-label truncate" x-text="s.name"></span>
+                <span class="sb-count" x-text="countForStructure(s.id)"></span>
+              </button>
+            </template>
+
+            <div class="sb-section" x-show="pinnedObjects().length">Pinned</div>
+            <template x-for="o in pinnedObjects()" :key="'pin-' + o.id">
+              <button class="sb-item sb-small" @click="openObject(o.id)" :title="o.title">
+                <span class="sb-ico" x-text="objectIcon(o)"></span>
+                <span class="sb-label truncate" x-text="o.title"></span>
+              </button>
+            </template>
+
+            <div class="sb-section">Recent</div>
+            <template x-for="o in recentObjects()" :key="'recent-' + o.id">
+              <button class="sb-item sb-small" @click="openObject(o.id)" :title="o.title">
+                <span class="sb-ico" x-text="objectIcon(o)"></span>
+                <span class="sb-label truncate" x-text="o.title"></span>
+              </button>
+            </template>
+
+            <div class="sb-section" x-show="tags.length">Tags</div>
+            <div class="sb-tags" x-show="tags.length">
+              <template x-for="t in tags" :key="'tag-' + t.id">
+                <button class="tag-chip" :class="{ active: view === 'tag:' + t.slug }" @click="filterByTag(t.slug)"
+                        x-text="'#' + t.name"></button>
+              </template>
+            </div>
+          </div>
+
+          <div class="sb-footer">
+            <button class="sb-item" @click="openSettings('object-types')" title="Settings">
+              <span class="sb-ico">⚙</span><span class="sb-label" x-show="!sidebarCollapsed">Settings</span>
+            </button>
+            <button class="sb-item" @click="openSpaceSwitcher()" title="Switch space">
+              <span class="sb-ico" x-text="activeSpace() ? (activeSpace().icon || '•') : '•'"></span>
+              <span class="sb-label truncate" x-show="!sidebarCollapsed" x-text="activeSpace() ? activeSpace().name : ''"></span>
+            </button>
+            <button class="sb-item sb-new" @click="createPage()" :title="'＋ ' + newPageLabel()">
+              <span class="sb-ico">✎</span><span class="sb-label truncate" x-show="!sidebarCollapsed" x-text="'＋ ' + newPageLabel()"></span>
+            </button>
+          </div>
+        </aside>
+
+        <!-- main -->
+        <main class="main">
+          <!-- list view -->
+          <div class="content" x-show="!currentObject">
+            <div class="list-head">
+              <div>
+                <h1 class="list-heading" x-text="listHeading()"></h1>
+                <p class="list-sub" x-text="listSubtitle()"></p>
+              </div>
+              <div class="list-actions">
+                <button class="btn btn-ghost" x-show="view === 'calendar'" @click="openToday()">📅 Today's note</button>
+                <button class="btn btn-ghost" @click="createPage()" x-text="'＋ ' + newPageLabel()"></button>
+                <button class="btn btn-primary" @click="openTypePicker()">＋ New object</button>
+              </div>
+            </div>
+
+            <div class="object-grid">
+              <template x-for="o in viewObjects()" :key="o.id">
+                <div class="object-card" @click="openObject(o.id)">
+                  <div class="card-header">
+                    <span class="card-icon" x-text="objectIcon(o)"></span>
+                    <span class="card-type" x-text="o.structure.name"></span>
+                  </div>
+                  <div class="card-title truncate" x-text="o.title"></div>
+                  <div class="card-desc" x-text="o.description || ''"></div>
+                  <div class="card-props" x-show="objectProps(o).length">
+                    <template x-for="p in objectProps(o)" :key="'cp-' + o.id + '-' + p.slug">
+                      <span class="chip-prop" :class="propChipClass(p.slug, p.value)"
+                            x-text="p.slug + ': ' + p.value"></span>
+                    </template>
+                  </div>
+                  <div class="card-meta">
+                    <span x-text="blockLabel(o)"></span>
+                    <span x-text="fmtRelative(o.updated_at)"></span>
+                    <span x-text="o.tags.map(t => '#' + t).join(' ')"></span>
+                  </div>
+                  <button class="card-pin" :class="{ on: isPinned(o.id) }" @click.stop="togglePin(o.id)"
+                          :title="isPinned(o.id) ? 'Unpin' : 'Pin to sidebar'">📌</button>
+                </div>
+              </template>
+            </div>
+
+            <div class="empty-state" x-show="viewObjects().length === 0" x-text="emptyStateText()"></div>
+          </div>
+
+          <!-- page view -->
+          <div class="content" x-show="currentObject">
+            <template x-if="currentObject">
+              <div class="page">
+                <div class="page-bar">
+                  <span class="page-type" x-text="(currentObject.structure.icon || '•') + ' ' + currentObject.structure.name"></span>
+                  <div class="page-bar-right">
+                    <button class="tb-icon" :class="{ on: isPinned(currentObject.id) }" @click="togglePin(currentObject.id)"
+                            :title="isPinned(currentObject.id) ? 'Unpin' : 'Pin'">📌</button>
+                    <button class="tb-icon" @click="rightPanelOpen = !rightPanelOpen" title="Toggle info panel">⧉</button>
+                  </div>
+                </div>
+
+                <div class="page-header">
+                  <div class="page-icon" x-text="currentObject.icon || '•'"></div>
+                  <h1 class="page-title" x-text="currentObject.title" contenteditable="true"
+                      title="Click to rename, Enter to save"
+                      @blur="renameObject($event.target.textContent)"
+                      @keydown.enter.prevent="commitTitle($event)"
+                      @paste="onPlainPaste($event)"
+                      @keydown.escape.prevent="$event.target.blur()"></h1>
+                  <div class="page-desc" x-text="currentObject.description || ''" contenteditable="true"
+                       data-placeholder="Add a description…"
+                       @paste="onPlainPaste($event)"
+                       @blur="saveDescription($event.target.textContent)"></div>
+                  <div class="page-props">
+                    <template x-for="(v, k) in currentObject.properties" :key="k">
+                      <span class="prop-chip"><b x-text="k + ':'"></b> <span x-text="JSON.stringify(v)"></span></span>
+                    </template>
+                    <template x-for="t in currentObject.tags" :key="t">
+                      <span class="prop-chip tag" x-text="'#' + t"></span>
+                    </template>
+                    <span class="prop-chip date" x-text="'Updated ' + fmtRelative(currentObject.updated_at)"></span>
+                  </div>
+                </div>
+
+                <!-- blocks -->
+                <div class="block-list">
+                  <template x-for="block in blockRows()" :key="block.id">
+                    <div class="block" :data-block-id="block.id" :style="blockIndent(block)"
+                         :class="'block-' + block.type + (drag.overId === block.id ? (drag.place === 'before' ? ' drop-before' : ' drop-after') : '')"
+                         @dragover.prevent="onBlockDragOver(block, $event)"
+                         @dragleave="onBlockDragLeave(block)"
+                         @drop.prevent="onBlockDrop(block)">
+                      <button class="heading-badge" x-show="block.type === 'heading'"
+                              @click="cycleHeadingLevel(block)"
+                              :title="'Heading level ' + (block.content.level || 1) + ' — click to cycle H1 → H2 → H3'"
+                              x-text="'H' + (block.content.level || 1)"></button>
+                      <span class="block-gutter">
+                        <span class="gutter-drag" draggable="true" title="Drag to reorder (Tab indents)"
+                              @dragstart="onBlockDragStart(block, $event)"
+                              @dragend="onBlockDragEnd()">⠿</span>
+                        <button class="gutter-btn" @click="addBlockAfter('paragraph', block)" title="Add block below">＋</button>
+                        <button class="gutter-btn" @click="deleteBlock(block)" title="Delete block">✕</button>
+                      </span>
+                      <!-- heading -->
+                      <template x-if="block.type === 'heading'">
+                        <div class="b-heading" :style="'font-size:' + (block.content.level === 1 ? '1.6em' : block.content.level === 2 ? '1.35em' : '1.15em')"
+                             contenteditable="true"
+                             :data-placeholder="blockPlaceholder(block)"
+                             @blur="saveBlockFromEl(block, $event.target)"
+                             @input="onBlockInput(block, $event)"
+                             @keydown="onBlockKeydown(block, $event)"
+                             @paste="onBlockPaste(block, $event)"></div>
+                      </template>
+                      <!-- paragraph (Note) -->
+                      <template x-if="block.type === 'paragraph'">
+                        <div class="b-paragraph" contenteditable="true"
+                             :data-placeholder="blockPlaceholder(block)"
+                             @blur="saveBlockFromEl(block, $event.target)"
+                             @input="onBlockInput(block, $event)"
+                             @keydown="onBlockKeydown(block, $event)"
+                             @paste="onBlockPaste(block, $event)"></div>
+                      </template>
+                      <!-- bulleted / numbered list -->
+                      <template x-if="block.type === 'bulleted_list'">
+                        <div class="b-list bulleted" contenteditable="true"
+                             @blur="saveBlockFromEl(block, $event.target)"
+                             @input="onBlockInput(block, $event)"
+                             @keydown="onBlockKeydown(block, $event)"
+                             @paste="onBlockPaste(block, $event)"></div>
+                      </template>
+                      <template x-if="block.type === 'numbered_list'">
+                        <div class="b-list numbered" contenteditable="true"
+                             :data-number="block._number || 1"
+                             @blur="saveBlockFromEl(block, $event.target)"
+                             @input="onBlockInput(block, $event)"
+                             @keydown="onBlockKeydown(block, $event)"
+                             @paste="onBlockPaste(block, $event)"></div>
+                      </template>
+                      <!-- todo -->
+                      <template x-if="block.type === 'todo'">
+                        <!-- Not a <label>: a label hands the click's focus to the
+                             checkbox, so clicking the text would not let you type. -->
+                        <div class="b-todo">
+                          <input type="checkbox" :checked="block.content.checked"
+                                 :aria-label="'Todo: ' + (block.content.text || 'untitled')"
+                                 @change="saveBlockFromEl(block, $event.target.closest('.b-todo')?.querySelector('[contenteditable]'), { checked: $event.target.checked })" />
+                          <span contenteditable="true" @blur="saveBlockFromEl(block, $event.target)"
+                                @input="onBlockInput(block, $event)"
+                                @keydown="onBlockKeydown(block, $event)"
+                                @paste="onBlockPaste(block, $event)"></span>
+                        </div>
+                      </template>
+                      <!-- quote -->
+                      <template x-if="block.type === 'quote'">
+                        <blockquote class="b-quote" contenteditable="true"
+                                    @blur="saveBlockFromEl(block, $event.target)"
+                                    @input="onBlockInput(block, $event)"
+                                    @keydown="onBlockKeydown(block, $event)"
+                                    @paste="onBlockPaste(block, $event)"></blockquote>
+                      </template>
+                      <!-- divider -->
+                      <template x-if="block.type === 'divider'"><hr /></template>
+                      <!-- renderer blocks (code / math / mermaid / plantuml / d2 / whiteboard) mount themselves from the registry -->
+                      <template x-if="isRenderedBlock(block.type)">
+                        <div class="b-render" :data-render-type="block.type"
+                             x-init="mountBlockRenderer($el, block)"></div>
+                      </template>
+                      <!-- code/diagram blocks own the caret: click under one (or press
+                           Enter on it) to open a text line below -->
+                      <div class="block-append" x-show="isRenderedBlock(block.type)"
+                           @click="addBlockAfter('paragraph', block)"
+                           title="New line below"></div>
+                      <!-- unknown types: raw JSON fallback -->
+                      <template x-if="!['heading','paragraph','todo','bulleted_list','numbered_list','quote','divider'].includes(block.type) && !isRenderedBlock(block.type)">
+                        <div class="b-unknown" x-text="JSON.stringify(block.content)"></div>
+                      </template>
+
+                      <!-- slash menu: "/" opens the block inserter for this block -->
+                      <div class="slash-menu" x-show="slash.open && slash.blockId === block.id" x-transition.opacity>
+                        <template x-for="(opt, i) in slashOptions()" :key="'slash-' + block.id + '-' + opt.id">
+                          <button type="button" class="slash-item" :class="{ active: i === slash.index }"
+                                  @mousedown.prevent="pickSlash(opt)" @mouseenter="slash.index = i">
+                            <span class="slash-icon" x-text="opt.icon"></span>
+                            <span class="slash-text">
+                              <span class="slash-label" x-text="opt.label"></span>
+                              <span class="slash-hint" x-text="opt.hint"></span>
+                            </span>
+                          </button>
+                        </template>
+                        <div class="slash-empty" x-show="slashOptions().length === 0" x-text="'No block matches “/' + slash.query + '”'"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Click the empty space under the page to continue writing -->
+                <div class="page-append" @click="addParagraphAtEnd()" title="New line"></div>
+
+                <!-- New block controls (same registry as the slash menu) -->
+                <div class="block-controls">
+                  <template x-for="def in blockDefinitions()" :key="'add-' + def.id">
+                    <button class="btn btn-ghost" @click="addBlockDef(def)"
+                            :title="def.hint" x-text="def.icon + ' ' + def.label"></button>
+                  </template>
+                </div>
+
+                <div class="page-footer">
+                  <button class="btn btn-danger" @click="deleteCurrentObject()">Delete object</button>
+                  <button class="btn btn-ghost" @click="closeObject()">← Back to list</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </main>
+
+        <!-- right info panel -->
+        <aside class="right-panel" x-show="currentObject && rightPanelOpen">
+          <template x-if="currentObject">
+            <div class="rp-inner">
+              <div class="rp-head">
+                <span class="rp-type" x-text="'Info'"></span>
+                <button class="rp-close" @click="rightPanelOpen = false" title="Close panel">✕</button>
+              </div>
+
+              <section class="rp-section">
+                <h3>Properties</h3>
+                <div class="rp-meta"><span>Type</span><span x-text="currentObject.structure.name"></span></div>
+                <div class="rp-meta"><span>Blocks</span><span x-text="blocks.length"></span></div>
+                <div class="rp-meta"><span>Created</span><span x-text="fmtDate(currentObject.created_at)"></span></div>
+                <div class="rp-meta"><span>Updated</span><span x-text="fmtDate(currentObject.updated_at)"></span></div>
+                <div class="rp-props">
+                  <template x-for="def in propertyDefs()" :key="'rpdef-' + def.id">
+                    <label class="rp-prop">
+                      <span class="rp-prop-name" x-text="def.name"></span>
+                      <input type="text" :value="propValue(def)" @change="setProperty(def, $event)"
+                             x-show="propInputType(def) === 'text'" placeholder="—" />
+                      <input type="number" :value="propValue(def)" @change="setProperty(def, $event)"
+                             x-show="propInputType(def) === 'number'" placeholder="—" />
+                      <input type="date" :value="propValue(def)" @change="setProperty(def, $event)"
+                             x-show="propInputType(def) === 'date'" />
+                      <select :value="propValue(def)" @change="setProperty(def, $event)"
+                              x-show="propInputType(def) === 'boolean'">
+                        <option value="">—</option>
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                      </select>
+                    </label>
+                  </template>
+                  <span class="empty-inline" x-show="propertyDefs().length === 0">no properties on this type</span>
+                </div>
+                <button class="btn btn-ghost rp-full" @click="togglePin(currentObject.id)"
+                        x-text="isPinned(currentObject.id) ? '📌 Unpin' : '📌 Pin to sidebar'"></button>
+              </section>
+
+              <section class="rp-section">
+                <h3>Tags</h3>
+                <div class="rp-chips">
+                  <template x-for="t in currentObject.tags" :key="'rt-' + t">
+                    <span class="prop-chip tag" x-text="'#' + t"></span>
+                  </template>
+                  <span class="empty-inline" x-show="currentObject.tags.length === 0">none</span>
+                </div>
+              </section>
+
+              <section class="rp-section">
+                <h3>Linked objects</h3>
+                <div class="rp-chips">
+                  <template x-for="o in linkedObjects" :key="'l-' + o.id">
+                    <span class="link-chip" @click="openObject(o.id)" x-text="(o.icon || '•') + ' ' + o.title"></span>
+                  </template>
+                  <span class="empty-inline" x-show="linkedObjects.length === 0">none</span>
+                </div>
+              </section>
+
+              <section class="rp-section">
+                <h3>Backlinks</h3>
+                <div class="rp-chips">
+                  <template x-for="o in backlinks" :key="'b-' + o.id">
+                    <span class="link-chip" @click="openObject(o.id)" x-text="(o.icon || '•') + ' ' + o.title"></span>
+                  </template>
+                  <span class="empty-inline" x-show="backlinks.length === 0">none</span>
+                </div>
+              </section>
+            </div>
+          </template>
+        </aside>
+      </div>
+
+      <!-- floating create button -->
+      <button class="fab" @click="openTypePicker()" title="New object (Ctrl+N)">＋</button>
+    </div>
+
+    <!-- ============ space switcher ============ -->
+    <div class="overlay space-overlay" x-show="spaceSwitcher.open" @click.self="spaceSwitcher.open = false" x-transition.opacity>
+      <div class="space-panel">
+        <input class="space-search" type="text" placeholder="Search"
+               x-model="spaceSwitcher.query"
+               @keydown.escape.prevent="spaceSwitcher.open = false" />
+        <div class="space-list">
+          <template x-for="s in spaceOptions()" :key="s.id">
+            <button class="space-row" :class="{ active: s.id === currentSpaceId }" @click="switchSpace(s.id)">
+              <span class="space-row-icon" x-text="s.icon || '•'"></span>
+              <span class="space-row-body">
+                <span class="row-title" x-text="s.name"></span>
+                <span class="space-row-meta" x-text="s.objectCount + ' object' + (s.objectCount === 1 ? '' : 's') + ' · ' + s.typeCount + ' type' + (s.typeCount === 1 ? '' : 's')"></span>
+              </span>
+              <span class="space-check" x-show="s.id === currentSpaceId" title="Current space">✓</span>
+            </button>
+          </template>
+          <div class="space-empty" x-show="spaceOptions().length === 0" x-text="'No space matches “' + spaceSwitcher.query + '”'"></div>
+        </div>
+
+        <div class="space-create" x-show="!spaceSwitcher.creating">
+          <button class="space-new-btn" @click="spaceSwitcher.creating = true">＋ Create space</button>
+        </div>
+        <div class="space-create-form" x-show="spaceSwitcher.creating">
+          <input type="text" placeholder="Space name" x-model="spaceSwitcher.newName"
+                 @keydown.enter.prevent="createSpace()"
+                 @keydown.escape.prevent="spaceSwitcher.creating = false" />
+          <button class="btn btn-primary" @click="createSpace()">Create</button>
+          <button class="btn btn-ghost" @click="spaceSwitcher.creating = false">Cancel</button>
+        </div>
+
+        <div class="panel-hints">
+          <span>Esc to close</span>
+          <span class="hint-right" x-text="spaces.length + ' space' + (spaces.length === 1 ? '' : 's')"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ search palette (Ctrl+K) ============ -->
+    <div class="overlay palette-overlay" x-show="palette.open" @click.self="palette.open = false" x-transition.opacity>
+      <div class="palette">
+        <input class="palette-input" type="text" placeholder="Search objects…" x-model="palette.query"
+               @input.debounce.200ms="runPaletteSearch()"
+               @keydown.down.prevent="paletteMove(1)"
+               @keydown.up.prevent="paletteMove(-1)"
+               @keydown.enter.prevent="paletteOpenActive()"
+               @keydown.escape.prevent="palette.open = false" />
+        <div class="palette-list">
+          <template x-for="(hit, idx) in palette.hits" :key="hit.object.id">
+            <button class="palette-row" :class="{ active: idx === palette.index }"
+                    @mouseenter="palette.index = idx" @click="openHit(hit)">
+              <span class="row-icon" x-text="hit.object.icon || '•'"></span>
+              <span class="row-body">
+                <span class="row-line">
+                  <span class="row-title" x-text="hit.object.title"></span>
+                  <span class="row-type" x-text="hit.object.structure.name"></span>
+                </span>
+                <span class="row-snippet" x-show="hit.snippet" x-text="hit.snippet"></span>
+              </span>
+              <span class="row-match" x-text="matchLabel(hit.matchType)"></span>
+            </button>
+          </template>
+          <div class="palette-empty" x-show="palette.query && palette.hits.length === 0" x-text="'No result for “' + palette.query + '”'"></div>
+          <div class="palette-empty" x-show="!palette.query">Type to search titles, text and tags.</div>
+        </div>
+        <div class="panel-hints">
+          <span>↑↓ to navigate</span><span>Esc to close</span><span>↵ to open</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ object type picker ============ -->
+    <div class="overlay picker-overlay" x-show="typePicker.open" @click.self="typePicker.open = false" x-transition.opacity>
+      <div class="picker">
+        <input class="picker-input" type="text" placeholder="Search" x-model="typePicker.query"
+               @input="typePicker.index = 0"
+               @keydown.down.prevent="typeMove(1)"
+               @keydown.up.prevent="typeMove(-1)"
+               @keydown.enter.prevent="typePickerEnter($event)"
+               @keydown.escape.prevent="typePicker.open = false" />
+        <div class="picker-list">
+          <template x-for="(s, idx) in typeOptions()" :key="s.id">
+            <button class="picker-row" :class="{ active: idx === typePicker.index }"
+                    @mouseenter="typePicker.index = idx" @click="typeSelect(s)">
+              <span class="row-tile" :style="'background:' + typeColor(s)" x-text="s.icon || '•'"></span>
+              <span class="row-title" x-text="s.name"></span>
+              <span class="row-count" x-text="countForStructure(s.id)"></span>
+              <span class="row-chevron">›</span>
+            </button>
+          </template>
+          <div class="picker-empty" x-show="typeOptions().length === 0 && !typePicker.query.trim()">No object types yet. Create one in Settings → Object types.</div>
+          <button type="button" class="picker-create" x-show="typePicker.query.trim()" @click="createFromPicker()">
+            <span class="row-tile">＋</span><span>Create “<span x-text="typePicker.query.trim()"></span>”</span><span class="row-chevron">↵</span>
+          </button>
+        </div>
+        <div class="panel-hints">
+          <span>↑↓ to navigate</span><span>Esc to close</span><span>↵ to select</span>
+          <span class="hint-right">Shift+↵ for the full form</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ settings ============ -->
+    <div class="overlay settings-overlay" x-show="settings.open" @click.self="settings.open = false" x-transition.opacity>
+      <div class="settings">
+        <aside class="st-nav">
+          <div class="st-title">⚙ Settings</div>
+          <div class="st-group">General</div>
+          <button class="st-item" :class="{ active: settings.pane === 'account' }" @click="settings.pane = 'account'">Account</button>
+          <button class="st-item" :class="{ active: settings.pane === 'appearance' }" @click="settings.pane = 'appearance'">Appearance</button>
+          <button class="st-item" @click="notImplemented('Language')">Language<span class="badge">soon</span></button>
+          <button class="st-item" @click="notImplemented('Offline & Sync')">Offline &amp; Sync<span class="badge">soon</span></button>
+          <div class="st-group">Current space</div>
+          <button class="st-item" :class="{ active: settings.pane === 'space' }" @click="settings.pane = 'space'">Space settings</button>
+          <button class="st-item" :class="{ active: settings.pane === 'object-types' }" @click="settings.pane = 'object-types'">Object types</button>
+          <div class="st-group">Data</div>
+          <button class="st-item" @click="exportJson()">Full export<span class="badge">json</span></button>
+          <button class="st-item" @click="notImplemented('Import content')">Import content<span class="badge">soon</span></button>
+        </aside>
+
+        <section class="st-pane">
+          <button class="st-close" @click="settings.open = false" title="Close">✕</button>
+
+          <!-- Account -->
+          <div x-show="settings.pane === 'account'">
+            <h2 class="st-h">Account</h2>
+            <p class="st-note">This build runs locally: objects, blocks and tags live in <code>data/notetaker.db</code>. There is no account system yet — see architect.md phase 7+.</p>
+            <div class="st-row"><span>Mode</span><span>Local, single user</span></div>
+            <div class="st-row"><span>Objects</span><span x-text="objects.length"></span></div>
+            <div class="st-row"><span>Types</span><span x-text="structures.length"></span></div>
+            <div class="st-row"><span>Tags</span><span x-text="tags.length"></span></div>
+          </div>
+
+          <!-- Appearance -->
+          <div x-show="settings.pane === 'appearance'">
+            <h2 class="st-h">Appearance</h2>
+            <p class="st-note">Theme applies to the editor, code blocks, math and diagrams.</p>
+            <div class="theme-row">
+              <button class="theme-card" :class="{ selected: themeMode === 'light' }" @click="setThemeMode('light')">
+                <span class="theme-swatch light"></span><span>Light</span>
+              </button>
+              <button class="theme-card" :class="{ selected: themeMode === 'dark' }" @click="setThemeMode('dark')">
+                <span class="theme-swatch dark"></span><span>Dark</span>
+              </button>
+              <button class="theme-card" :class="{ selected: themeMode === 'system' }" @click="setThemeMode('system')">
+                <span class="theme-swatch system"></span><span>System</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Space settings -->
+          <div x-show="settings.pane === 'space'">
+            <h2 class="st-h">Space settings</h2>
+            <p class="st-note">A space is a real database row: its objects, object types and tags stay inside it, and search never crosses between spaces.</p>
+            <label class="st-field">
+              <span>Name</span>
+              <input type="text" x-model="spaceForm.name" @change="saveSpace()" placeholder="My first brain" />
+            </label>
+            <label class="st-field">
+              <span>Icon</span>
+              <input type="text" x-model="spaceForm.icon" @change="saveSpace()" maxlength="4" />
+            </label>
+            <div class="icon-choices">
+              <template x-for="ic in iconChoices" :key="'ic-' + ic">
+                <button class="icon-choice" @click="setSpaceIcon(ic)" x-text="ic"></button>
+              </template>
+            </div>
+
+            <div class="st-sub">Content in this space</div>
+            <div class="st-row"><span>Objects</span><span x-text="activeSpace() ? activeSpace().objectCount : '—'"></span></div>
+            <div class="st-row"><span>Object types</span><span x-text="activeSpace() ? activeSpace().typeCount : '—'"></span></div>
+            <div class="st-row"><span>Tags</span><span x-text="tags.length"></span></div>
+
+            <div class="st-sub">Danger zone</div>
+            <p class="st-note">Deleting a space removes its objects, types and tags. The last remaining space cannot be deleted.</p>
+            <div class="st-actions">
+              <button class="btn btn-danger" @click="deleteActiveSpace()">Delete this space</button>
+            </div>
+          </div>
+
+          <!-- Object types -->
+          <div x-show="settings.pane === 'object-types'">
+            <h2 class="st-h">Object Types</h2>
+            <div class="st-intro">
+              <span class="st-intro-icon">🧩</span>
+              <div>
+                <div class="st-intro-title">Object types</div>
+                <div class="st-note">Here you can customize your object types. Select an object type to customize it.</div>
+              </div>
+            </div>
+
+            <div class="st-sub">Object types</div>
+            <div class="type-grid">
+              <template x-for="s in structures" :key="'st-' + s.id">
+                <button class="type-card" :class="{ selected: typeEditor.id === s.id }" @click="editType(s)">
+                  <span class="type-icon" :style="'background:' + typeColor(s)" x-text="s.icon || '•'"></span>
+                  <span class="type-name truncate" x-text="s.name"></span>
+                  <span class="type-count" x-text="objectCountLabel(s.id)"></span>
+                </button>
+              </template>
+              <button class="type-card create" @click="editType(null)">
+                <span class="type-icon plus">＋</span>
+                <span class="type-name">Create</span>
+              </button>
+            </div>
+
+            <div class="st-sub" x-show="typeEditor.open" x-text="typeEditor.id ? 'Customize object type' : 'New object type'"></div>
+            <div class="type-editor" x-show="typeEditor.open">
+              <label class="st-field">
+                <span>Name</span>
+                <input type="text" x-model="typeEditor.name" placeholder="Project" />
+              </label>
+              <label class="st-field">
+                <span>Icon</span>
+                <input type="text" x-model="typeEditor.icon" maxlength="4" placeholder="🚀" />
+              </label>
+              <div class="icon-choices">
+                <template x-for="ic in iconChoices" :key="'tic-' + ic">
+                  <button class="icon-choice" @click="typeEditor.icon = ic" x-text="ic"></button>
+                </template>
+              </div>
+              <div class="st-actions">
+                <button class="btn btn-ghost" @click="typeEditor.open = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveType()"
+                        x-text="typeEditor.id ? 'Save type' : 'Create type'"></button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============ new object (full form) ============ -->
+    <div class="overlay" x-show="newObjectModal" @click.self="newObjectModal = false" x-transition.opacity>
+      <div class="modal" @keydown.ctrl.enter.prevent="createObject()">
+        <h2>New object</h2>
+        <label>Title</label>
+        <input type="text" x-model="newObject.title" placeholder="Untitled" x-ref="newObjectTitle" @keydown.enter.prevent="$refs.newObjectDescription.focus()" />
+        <label>Description</label>
+        <input type="text" x-model="newObject.description" placeholder="Optional short description" x-ref="newObjectDescription" @keydown.enter.prevent="$refs.newObjectTags.focus()" />
+        <label>Type</label>
+        <div class="type-grid">
+          <template x-for="s in structures" :key="'tg-' + s.id">
+            <button type="button" class="type-card" :class="{ selected: newObject.structureId === s.id }"
+                    @click="newObject.structureId = s.id">
+              <span class="type-icon" :style="'background:' + typeColor(s)" x-text="s.icon || '•'"></span>
+              <span class="type-name truncate" x-text="s.name"></span>
+            </button>
+          </template>
+        </div>
+        <label>Tags (comma separated)</label>
+        <input type="text" x-model="newObject.tags" placeholder="rust, reading" x-ref="newObjectTags" @keydown.enter.prevent="$refs.newObjectContent.focus()" />
+        <label>Content (markdown-lite, one block per line)</label>
+        <textarea x-model="newObject.content" x-ref="newObjectContent" rows="7"
+                  placeholder="Intro paragraph…&#10;## Heading&#10;- [ ] A todo&#10;- A bullet&#10;1. Numbered item&#10;> A quote&#10;---&#10;```js&#10;console.log('hi');&#10;```"></textarea>
+        <div class="field-hint">
+          <code># </code>heading &nbsp; <code>- [ ] </code>todo &nbsp; <code>- </code>bullet &nbsp;
+          <code>1. </code>numbered &nbsp; <code>&gt; </code>quote &nbsp;
+          <code>---</code>divider &nbsp; <code>```lang … ```</code>code block
+          (<code>```mermaid</code> / <code>```plantuml</code> / <code>```d2</code> / <code>```math</code> also work) &nbsp;
+          <code>**bold**</code> / <code>*italic*</code> / <code>`code`</code> / <code>[label](url)</code> inline.
+          <span class="hint-key">Ctrl+↵</span> creates the object.
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" @click="newObjectModal = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="creatingObject" @click="createObject()" x-text="creatingObject ? 'Creating…' : 'Create'"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- selection format toolbar: floats above the selection inside a text block -->
+    <div class="fmt-toolbar" x-show="fmt.open" :style="fmtStyle()" x-cloak
+         @mousedown.prevent>
+      <button type="button" class="fmt-btn" title="Bold (Ctrl+B)" @mousedown.prevent="applyMark('bold')"><b>B</b></button>
+      <button type="button" class="fmt-btn" title="Italic (Ctrl+I)" @mousedown.prevent="applyMark('italic')"><i>I</i></button>
+      <button type="button" class="fmt-btn" title="Underline (Ctrl+U)" @mousedown.prevent="applyMark('underline')"><u>U</u></button>
+      <button type="button" class="fmt-btn" title="Strikethrough" @mousedown.prevent="applyMark('strike')"><s>S</s></button>
+      <button type="button" class="fmt-btn" title="Inline code" @mousedown.prevent="applyMark('code')">&lt;/&gt;</button>
+      <button type="button" class="fmt-btn" title="Highlight" @mousedown.prevent="applyMark('highlight')">H</button>
+    </div>
+
+    <!-- toast -->
+    <div class="toast" x-show="toast" x-text="toast" x-transition></div>
+  </div>
+</body>
+</html>

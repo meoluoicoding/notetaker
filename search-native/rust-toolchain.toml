@@ -1,0 +1,6 @@
+# search-native is a separate crate (not part of rust-lib): it builds with the
+# "stable" toolchain so napi/tantivy can resolve fresh versions. rust-lib keeps
+# its own pinned 1.85 toolchain unchanged. ("stable" = installed locally;
+# a numeric channel would make rustup download a new toolchain.)
+[toolchain]
+channel = "stable"

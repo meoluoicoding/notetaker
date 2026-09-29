@@ -1,0 +1,1 @@
+{"structs":["RegisterStreamPB","QueryFilePB","FileStatePB"],"enums":["FileStorageEvent","StorageNotification"]}

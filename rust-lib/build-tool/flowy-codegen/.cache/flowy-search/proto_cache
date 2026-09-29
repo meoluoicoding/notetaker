@@ -1,0 +1,1 @@
+{"structs":["SearchStatePB","SearchQueryPB","SearchResponsePB","RepeatedSearchSummaryPB","SearchSummaryPB","SearchSourcePB","RepeatedSearchResponseItemPB","SearchResponseItemPB","RepeatedLocalSearchResponseItemPB","LocalSearchResponseItemPB","ResultIconPB","SearchFilterPB"],"enums":["SearchEvent","SearchNotification","ResultIconTypePB"]}

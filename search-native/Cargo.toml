@@ -1,0 +1,17 @@
+[package]
+name = "search-native"
+version = "0.1.0"
+edition = "2021"
+description = "napi-rs native search layer for Notetaker. Wraps Tantivy 0.24.1 — the same version rust-lib (AppFlowy core) pins for flowy-search — as a secondary index over the SQLite source of truth."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+regex = "1"
+tantivy = "0.24.1"
+
+[build-dependencies]
+napi-build = "2"

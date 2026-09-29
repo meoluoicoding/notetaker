@@ -1,0 +1,44 @@
+{
+  "name": "notetaker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server/server.ts",
+    "seed": "tsx src/db/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test --config=playwright.e2e.config.ts",
+    "e2e:ui": "playwright test --config=playwright.e2e.config.ts --ui",
+    "e2e:debug": "playwright test --config=playwright.e2e.config.ts --debug",
+    "build:vendor": "node scripts/build-tldraw-vendor.mjs",
+    "build:ts": "node scripts/build-ts.mjs",
+    "build:native": "cd search-native && cargo build --release && node ../scripts/postbuild-native.mjs",
+    "start": "npm run build:ts && node dist/index.mjs"
+  },
+  "dependencies": {
+    "@terrastruct/d2": "^0.1.33",
+    "alpinejs": "^3.17.3",
+    "better-sqlite3": "^13.0.3",
+    "codemirror": "^5.65.16",
+    "express": "^5.1.0",
+    "katex": "^0.18.7",
+    "kysely": "^0.28.8",
+    "mermaid": "^10.9.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tldraw": "^5.4.2",
+    "uuid": "^13.0.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}
